@@ -1,0 +1,76 @@
+using UnityEngine;
+using UnityEngine.Rendering;
+using UnityEngine.Rendering.Universal;
+
+public class ExcludeLayerRenderFeature : ScriptableRendererFeature
+{
+    class ExcludeLayerRenderPass : ScriptableRenderPass
+    {
+        private readonly string _profilerTag = "ExcludeLayerRenderPass";
+        private readonly LayerMask _excludeLayerMask;
+        private readonly RenderQueueType _renderQueueType;
+        private FilteringSettings _filteringSettings;
+
+        public ExcludeLayerRenderPass(LayerMask excludeLayerMask, RenderQueueType renderQueueType, RenderPassEvent requiredEvent)
+        {
+            _excludeLayerMask = excludeLayerMask;
+            _renderQueueType = renderQueueType;
+            renderPassEvent = requiredEvent;
+
+            // 设置过滤器，只渲染非指定Layer的对象
+            _filteringSettings = new FilteringSettings(RenderQueueRange.all, ~_excludeLayerMask);
+        }
+
+        public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
+        {
+            CommandBuffer cmd = CommandBufferPool.Get(_profilerTag);
+            cmd.SetRenderTarget(renderingData.cameraData.renderer.cameraColorTargetHandle, renderingData.cameraData.renderer.cameraDepthTargetHandle);
+            cmd.ClearRenderTarget(true, true, Color.clear);
+
+            // 获取当前相机的culling结果
+            var cullingResults = renderingData.cullResults;
+
+            // 配置绘制设置
+            var drawingSettings = CreateDrawingSettings(
+                new ShaderTagId("UniversalForward"),
+                ref renderingData,
+                SortingCriteria.CommonOpaque
+            );
+
+            var renderListParams = new RendererListParams
+            (
+                cullingResults,
+                drawingSettings,
+                _filteringSettings
+                );
+
+            var rendererList = context.CreateRendererList(ref renderListParams);
+            // 执行渲染
+            cmd.DrawRendererList(rendererList);
+            context.ExecuteCommandBuffer(cmd);
+            CommandBufferPool.Release(cmd);
+        }
+    }
+
+    [System.Serializable]
+    public class Settings
+    {
+        public LayerMask excludeLayerMask = 0;
+        public RenderPassEvent renderPassEvent = RenderPassEvent.AfterRenderingOpaques;
+        public RenderQueueType renderQueueType = RenderQueueType.Opaque;
+    }
+
+    public Settings settings = new Settings();
+    private ExcludeLayerRenderPass _renderPass;
+
+    public override void Create()
+    {
+        _renderPass = new ExcludeLayerRenderPass(settings.excludeLayerMask, settings.renderQueueType, settings.renderPassEvent);
+    }
+
+    public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
+    {
+        _renderPass.renderPassEvent = settings.renderPassEvent;
+        renderer.EnqueuePass(_renderPass);
+    }
+}
